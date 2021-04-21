@@ -23,6 +23,9 @@ type App struct {
 	Host            string   `yaml:"host"`
 	Port            uint64   `yaml:"port"`
 	EnvironmentVars []string `yaml:"envVars"`
+	ProxyHost       string   `yaml:"proxyHost"`
+	ProxyPort       string   `yaml:"proxyPort"`
+	ShowGUIBrowser  bool     `yaml:"showGUIBrowser"`
 }
 
 type NsqConfig struct {
@@ -64,4 +67,28 @@ func getCurrentPath() string {
 	logger.Root.Infof(" Current path:%s\n", dir)
 
 	return dir
+}
+
+func NewConfig() *Config {
+	c := Config{
+		WorkerConfigs: models.CreateNewDataClientConfig(),
+		OServer: OurServer{
+			Scheme: "http",
+			Host:   "localhost",
+			Port:   58765,
+		},
+		App: App{
+			Host:           "localhost",
+			Port:           44445,
+			ProxyHost:      "",
+			ProxyPort:      "",
+			ShowGUIBrowser: false,
+		},
+		Tunnel: TunnelConfig{
+			SSHPort:    22,
+			LocalPort:  55781,
+			RemotePort: 55781,
+		},
+	}
+	return &c
 }

@@ -9,7 +9,6 @@ import (
 	"github.com/duc-thien-phong/techsharedservices/models/customer"
 	nsqmodels "github.com/duc-thien-phong/techsharedservices/nsq/models"
 	"github.com/duc-thien-phong/techsharedservices/utils"
-	"github.com/golang/glog"
 	"math/rand"
 	"net/http/cookiejar"
 	"sync"
@@ -48,8 +47,8 @@ type BaseAdapter struct {
 	//
 	StillHasPermissionFunc func(string) bool
 
-	BeforeCrawlingFunc func(args interface{})
-	AfterCrawlingFunc  func(args interface{})
+	BeforeCrawlingFunc func(args interface{}) (canContinue bool, error error)
+	AfterCrawlingFunc  func(args interface{}) (canContinue bool, error error)
 
 	Wg sync.WaitGroup
 }
@@ -123,9 +122,9 @@ func (c *BaseAdapter) Init() {
 	c.Crawled = make(chan MetaCrawlingAppResult, 1000)
 
 	go func() {
-		c.startCheckerMonitor(&c.Wg)
-		c.startReceivingCheckResultProcess()
-		c.startCrawlerMonitor(&c.Wg)
+		go c.startCheckerMonitor(&c.Wg)
+		go c.startReceivingCheckResultProcess()
+		go c.startCrawlerMonitor(&c.Wg)
 	}()
 }
 
@@ -161,7 +160,11 @@ func (c *BaseAdapter) Crawl(config models.DataCrawlerConfig) ([]customer.Applica
 		}
 	}
 
-	c.beforeCrawling()
+	if canContinue, err := c.beforeCrawling(); err != nil {
+		return nil, err
+	} else if !canContinue {
+		return nil, nil
+	}
 
 	///// START PROCESS to RECEIVE apps and submit them to our server
 	finish := make(chan struct{}, 1)
@@ -231,20 +234,29 @@ func (c *BaseAdapter) Crawl(config models.DataCrawlerConfig) ([]customer.Applica
 	for hasNextPage && !c.NeedToCloseCrawlers {
 
 		if c.Producer.NeedToBeClosed() {
-			glog.Infof("Need to close --> skip crawling")
+			logger.Root.Infof("Need to close --> skip crawling")
 			break
 		}
 
 		// crawler.sortThePage()
-		glog.Infof("Producer `%s` processes page %d----------------------", c.Producer.GetID(), c.GetConfig().CurrentCrawlingPage)
+		logger.Root.Infof("Producer `%s` processes page %d----------------------", c.Producer.GetID(), c.GetConfig().CurrentCrawlingPage)
 
 		var err error
 		var workIDs []string
 		var hasNextPage bool
 		for retries := 0; retries < 3 && len(workIDs) == 0 && !c.Producer.NeedToBeClosed(); retries++ {
-			glog.Infof("retries: %d", retries)
+			logger.Root.Infof("retries: %d", retries)
 
 			workIDs, hasNextPage, err = c.Producer.ProcessPage(c.GetConfig(), pageSize)
+			if err == nil {
+				break
+			} else if err == ErrInvalidProducer {
+				// if the current producer is invalid, no need to try again
+				break
+			} else {
+				time.Sleep(5 * time.Second)
+				continue
+			}
 		}
 		if err != nil {
 			c.Producer.SetNeedToClose(true)
@@ -262,25 +274,25 @@ func (c *BaseAdapter) Crawl(config models.DataCrawlerConfig) ([]customer.Applica
 
 		if len(workIDs) == 0 {
 			//filename := utils.WriteContentToPage([]byte(pageContent), "page-", "empty-work-ids")
-			//glog.Infof("Log content to file `%s`", filename)
+			//logger.Root.Infof("Log content to file `%s`", filename)
 			logger.Root.Infof("There is no data id anymore")
 			break
 		}
-		glog.Infof("Found %d work ids in page %d", len(workIDs), c.GetConfig().CurrentCrawlingPage)
+		logger.Root.Infof("Found %d work ids in page %d", len(workIDs), c.GetConfig().CurrentCrawlingPage)
 
-		glog.Infof("has next page: %v", hasNextPage)
+		logger.Root.Infof("has next page: %v", hasNextPage)
 		skip := 0
 		nedToStopBecauseOfError := false
 		totalWorkIDs += len(workIDs)
 
 		for i, id := range workIDs {
 			if id == "" || c.CheckIfExtractedBefore(id) {
-				// glog.Infof("Skip app `%s`", id)
+				// logger.Root.Infof("Skip app `%s`", id)
 				skip++
 				continue
 			}
 
-			// glog.Infof("puts app `%s` to the list", id)
+			// logger.Root.Infof("puts app `%s` to the list", id)
 			c.AddCrawlingRequestBackToTheQueue(MetaCrawlingAppRequest{
 				DataID:      id,
 				IndexInPage: i,
@@ -295,14 +307,14 @@ func (c *BaseAdapter) Crawl(config models.DataCrawlerConfig) ([]customer.Applica
 		}
 
 		if skip >= 0 {
-			glog.Infof("Skipped %d applications.", skip)
+			logger.Root.Infof("Skipped %d applications.", skip)
 		}
 		totalSkip += skip
 
 		if hasNextPage && !nedToStopBecauseOfError {
 			c.GetConfig().CurrentCrawlingPage++
 		} else {
-			// glog.Infof("Sleep 60 seconds before refresh this page (%d)", p.currentPage)
+			// logger.Root.Infof("Sleep 60 seconds before refresh this page (%d)", p.currentPage)
 			// time.Sleep(60 * time.Second)
 			break
 		}
@@ -324,20 +336,20 @@ func (c *BaseAdapter) Crawl(config models.DataCrawlerConfig) ([]customer.Applica
 	lastNumNeedToCrawl := 0
 	for c.NumNeedToCrawl > 0 && !c.NeedToCloseCrawlers {
 		if lastNumNeedToCrawl != c.NumNeedToCrawl {
-			glog.Infof("Need to crawled remaining: %d (in queue: %d)", c.NumNeedToCrawl, len(c.NeedToCrawled))
+			logger.Root.Infof("Need to crawled remaining: %d (in queue: %d)", c.NumNeedToCrawl, len(c.NeedToCrawled))
 			lastNumNeedToCrawl = c.NumNeedToCrawl
 		}
 		time.Sleep(5 * time.Second)
 	}
 
-	glog.Infof("Send signal to stop the process")
+	logger.Root.Infof("Send signal to stop the process")
 	finish <- struct{}{}
-	glog.Infof("Sent!")
+	logger.Root.Infof("Sent!")
 
-	glog.Infof("\n\nSTOP CRAWLING.......\n\n")
+	logger.Root.Infof("\n\nSTOP CRAWLING.......\n\n")
 	if totalSkip >= totalWorkIDs-pageSize {
 		sleepTime := int(30*float64(totalSkip)/float64(totalWorkIDs+1)) + (totalSkip+1)/(totalWorkIDs+1)*60
-		glog.Infof("We have too many skips (%d/%d). Need to sleep a bit (%d seconds)", totalSkip, totalWorkIDs, sleepTime)
+		logger.Root.Infof("We have too many skips (%d/%d). Need to sleep a bit (%d seconds)", totalSkip, totalWorkIDs, sleepTime)
 		time.Sleep(time.Duration(sleepTime) * time.Second)
 	}
 
@@ -347,26 +359,31 @@ func (c *BaseAdapter) Crawl(config models.DataCrawlerConfig) ([]customer.Applica
 	}
 
 	c.RemoveOldIds()
-	c.afterCrawling()
+	if _, err := c.afterCrawling(); err != nil {
+		return nil, err
+	}
+
 	return []customer.Application{}, nil
 }
 
-func (c *BaseAdapter) beforeCrawling() {
+func (c *BaseAdapter) beforeCrawling() (canContinue bool, err error) {
 	if c.BeforeCrawlingFunc != nil {
 		logger.Root.Infof("Running function BeforeCrawling")
-		c.BeforeCrawlingFunc(nil)
+		return c.BeforeCrawlingFunc(nil)
 	} else {
 		logger.Root.Warnf("Function BeforeCrawling is not set properly")
 	}
+	return false, errors.New("before crawling function is not implemented yet")
 }
 
-func (c *BaseAdapter) afterCrawling() {
+func (c *BaseAdapter) afterCrawling() (canContinue bool, err error) {
 	if c.AfterCrawlingFunc != nil {
 		logger.Root.Infof("Running function AfterCrawling")
-		c.AfterCrawlingFunc(nil)
+		return c.AfterCrawlingFunc(nil)
 	} else {
 		logger.Root.Warnf("Function AfterCrawling is not set properly")
 	}
+	return false, errors.New("before crawling function is not implemented yet")
 }
 
 // GetACrawler returns a random created crawler
@@ -376,7 +393,7 @@ func (p *BaseAdapter) GetACrawler() ICrawler {
 	var newC ICrawler = nil
 	var err error
 	for newC == nil && !p.NeedToCloseCrawlers {
-		newC, err = p.CreateCrawlerFunc(p.WithDocker(), nil)
+		newC, err = p._createCrawler()
 		if err == ErrNoUsableAccount {
 			logger.Root.Errorf("There is no usable account")
 			return nil
@@ -404,8 +421,38 @@ func (p *BaseAdapter) RemoveCrawler(id string) {
 
 // GetAChecker returns a new random created checker
 func (p *BaseAdapter) GetAChecker() IChecker {
-	// No need to use it for now
-	return nil
+	retries := 0
+
+	var newC IChecker = nil
+	var err error
+	for newC == nil && !p.NeedToCloseCheckers {
+		newC, err = p._createChecker()
+		if err == ErrNoUsableAccount {
+			logger.Root.Errorf("There is no usable account")
+			return nil
+		}
+		retries++
+		time.Sleep(time.Duration(retries) * time.Second)
+	}
+	return newC
+}
+
+func (p *BaseAdapter) _createCrawler() (ICrawler, error) {
+	newC, err := p.CreateCrawlerFunc(p.WithDocker(), map[string]interface{}{
+		"proxyHost":      p.config.App.ProxyHost,
+		"proxyPort":      p.config.App.ProxyPort,
+		"showGUIBrowser": p.config.App.ShowGUIBrowser,
+	})
+	return newC, err
+}
+
+func (p *BaseAdapter) _createChecker() (IChecker, error) {
+	newC, err := p.CreateCheckerFunc(p.WithDocker(), map[string]interface{}{
+		"proxyHost":      p.config.App.ProxyHost,
+		"proxyPort":      p.config.App.ProxyPort,
+		"showGUIBrowser": p.config.App.ShowGUIBrowser,
+	})
+	return newC, err
 }
 
 func (p *BaseAdapter) RemoveChecker(id string) {
@@ -451,21 +498,6 @@ func (c *BaseAdapter) WithDocker() bool {
 		}
 	}
 	return true
-}
-
-func (c *BaseAdapter) startCheckerMonitor(wg *sync.WaitGroup) {
-	c.StartedCheckerWatcher = true
-	logger.Root.Infof("Starting checker watcher....")
-	for {
-		if c.CanStartChecker() && len(c.CheckerList) < c.getCheckerParallelism() && !c.NeedToCloseCheckers {
-			c.createAndAddCheckerToList(wg)
-		} else {
-			if time.Now().Unix()%5 == 0 {
-				logger.Root.Infof("Number of checkers: %d....", len(c.CheckerList))
-			}
-			time.Sleep(15 * time.Second)
-		}
-	}
 }
 
 func (c *BaseAdapter) PickRandomColorName() string {
@@ -862,7 +894,7 @@ func (p *BaseAdapter) GetMaxCrawlingInQueue() int {
 		case int:
 			N = v
 		default:
-			glog.Infof("Could not convert crawlingQueue %T to int", d)
+			logger.Root.Infof("Could not convert crawlingQueue %T to int", d)
 		}
 	}
 	return N
@@ -873,10 +905,29 @@ func (p *BaseAdapter) startCrawlerMonitor(wg *sync.WaitGroup) {
 	logger.Root.Infof("Starting crawler watcher....")
 	for {
 		if p.CanStartCrawler() && len(p.CrawlerList) < p.getCrawlerParallelism() && !p.NeedToCloseCrawlers {
-			p.createAndAddCrawlerToList(wg)
+			if err := p.createAndAddCrawlerToList(wg); err != nil {
+				time.Sleep(15 * time.Second)
+			}
 		} else {
 			if time.Now().Unix()%5 == 0 {
 				logger.Root.Infof("Number of crawlers: %d....", len(p.CrawlerList))
+			}
+			time.Sleep(15 * time.Second)
+		}
+	}
+}
+
+func (c *BaseAdapter) startCheckerMonitor(wg *sync.WaitGroup) {
+	c.StartedCheckerWatcher = true
+	logger.Root.Infof("Starting checker watcher....")
+	for {
+		if c.CanStartChecker() && len(c.CheckerList) < c.getCheckerParallelism() && !c.NeedToCloseCheckers {
+			if err := c.createAndAddCheckerToList(wg); err != nil {
+				time.Sleep(15 * time.Second)
+			}
+		} else {
+			if time.Now().Unix()%5 == 0 {
+				logger.Root.Infof("Number of checkers: %d....", len(c.CheckerList))
 			}
 			time.Sleep(15 * time.Second)
 		}
@@ -894,9 +945,9 @@ func (p *BaseAdapter) SetProducer(c ICrawler) {
 	p.Producer = c
 }
 
-func (p *BaseAdapter) createAndAddCrawlerToList(wg *sync.WaitGroup) {
+func (p *BaseAdapter) createAndAddCrawlerToList(wg *sync.WaitGroup) error {
 
-	crawler, err := p.CreateCrawlerFunc(p.WithDocker(), nil)
+	crawler, err := p._createCrawler()
 	if err == nil && crawler != nil {
 		c := crawler //.(*Crawler)
 		c.SetID(p.PickRandomColorName())
@@ -916,14 +967,15 @@ func (p *BaseAdapter) createAndAddCrawlerToList(wg *sync.WaitGroup) {
 
 		time.Sleep(5 * time.Second)
 	}
+	return err
 }
 
-func (p *BaseAdapter) createAndAddCheckerToList(wg *sync.WaitGroup) {
+func (p *BaseAdapter) createAndAddCheckerToList(wg *sync.WaitGroup) error {
 
 	if p.CreateCheckerFunc == nil {
 		logger.Root.Fatalf("function CreateCheckerFunc need to be set. %#v", *p)
 	}
-	checker, err := p.CreateCheckerFunc(p.WithDocker(), nil)
+	checker, err := p._createChecker()
 	if err == nil && checker != nil {
 		c := checker //.(*Checker)
 		c.SetID("checker-" + p.PickRandomColorName())
@@ -935,6 +987,7 @@ func (p *BaseAdapter) createAndAddCheckerToList(wg *sync.WaitGroup) {
 
 		time.Sleep(5 * time.Second)
 	}
+	return err
 	// if len(p.crawlerList) == 0 {
 	// 	logger.Root.Infof("Don't create crawler because NeedToCloseCrawlers=%v", p.NeedToCloseCrawlers)
 	// }
@@ -950,7 +1003,10 @@ func (p *BaseAdapter) SubmitApps(results []customer.Application, onOK func()) {
 	}
 	p.SendAddingApplicationsReq(append([]customer.Application{}, results...), 3, func() {
 		p.MarkAsExtracted(ids)
-		p.WriteCrawledIDNos()
+		err := p.WriteCrawledIDNos()
+		if err != nil {
+			logger.Root.Errorf("Error when writing the crawled ids. %v", err)
+		}
 		for _, r := range results {
 			if r.ApplicationDate.Unix() > p.GetWorkerConfig().Crawler.LastCrawlingDate.Unix() {
 				p.GetWorkerConfig().Crawler.LastCrawlingDate = time.Unix(r.ApplicationDate.Unix(), 0)

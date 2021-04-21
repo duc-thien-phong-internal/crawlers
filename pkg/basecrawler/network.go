@@ -44,9 +44,9 @@ const (
 )
 
 const (
-	EventFetchingAccountDone = "fetchingAccountDone"
-	EventNetworkError        = "networkError"
-	EventOnReceivingMessage  = "receivingMessage"
+	EventFetchingAccountDone       = "fetchingAccountDone"
+	EventNetworkError              = "networkError"
+	EventOnReceivingRequestCommand = "receivingRequestCommand"
 )
 
 func (s ConnectionState) String() string {
@@ -136,6 +136,10 @@ func CreateNetworkManager(
 		workerSoftwareSource: workerSoftwareSource,
 		sleepingTime:         CreateSleepingTime(),
 	}
+	n.eventHandlers = make(map[string][]chan EventValue)
+	n.needToSend = make(chan PretendMsg)
+	n.resultMap = make(map[commands.CommandID]chan string)
+	n.signalInterruption = make(chan bool, 1)
 	return &n
 }
 
@@ -236,16 +240,25 @@ func (n *NetworkManager) onTunnelStateChange(v EventValue) {
 	if v != nil {
 		result := v.(ConnectionState)
 		if result == StateConnected {
-			logger.Root.Infof("Connected to our tunnel")
-			if n.AuthorizationToken == "" && n.LoginToOurServer() {
-				n.FetchAccounts()
-			} else {
-				if n.RefreshToken(false) != nil {
-					n.sleepingTime.Update()
-					logger.Root.Infof(" Sleeping %d seconds before trying to connect to server again...", n.sleepingTime.sleepTime)
-					time.Sleep(time.Duration(n.sleepingTime.sleepTime) * time.Second)
-					return
+			for {
+				logger.Root.Infof("Connected to our tunnel")
+				if n.AuthorizationToken == "" {
+					if n.LoginToOurServer() {
+						n.FetchAccounts()
+						break
+					} else {
+						n.sleepingTime.Update()
+					}
+				} else {
+					if n.RefreshToken(false) != nil {
+						n.sleepingTime.Update()
+					} else {
+						break
+					}
 				}
+				logger.Root.Infof(" Sleeping %d seconds before trying to connect to server again...", n.sleepingTime.sleepTime)
+				time.Sleep(time.Duration(n.sleepingTime.sleepTime) * time.Second)
+
 			}
 
 			// register to our server
@@ -284,6 +297,9 @@ func (n *NetworkManager) openSocketConnection() {
 		n.sleepingTime.Update()
 		if n.socketConn != nil {
 			n.socketConn.Close()
+		}
+		if n.isTunnelStarted() {
+			go n.openSocketConnection()
 		}
 		return
 	}
@@ -848,7 +864,23 @@ func (n *NetworkManager) waitForCommandFromOurServer() {
 		// logger.Root.Infof("got Message: %#v\n", msg)
 
 		if !msg.HasEmptyBody() {
-			n.EmitEvent(EventOnReceivingMessage, msg)
+
+			if msg.Command != nil {
+				if msg.Command.Type == commands.TypeRequest {
+					n.EmitEvent(EventOnReceivingRequestCommand, msg)
+
+				} else if msg.Command.Type == commands.TypeResponse {
+					go func() {
+						n.resultMap[msg.Command.ID] <- msg.GetRawDataFromBody()
+					}()
+				} else {
+					logger.Root.Warnf("Unsupported message type %s", msg.Command.Type)
+				}
+
+			} else {
+				logger.Root.Infof("Received an empty command")
+			}
+
 		} else {
 			logger.Root.Infof(" Message with empty body\n")
 		}
@@ -914,6 +946,7 @@ func (n *NetworkManager) waitForCommandFromOurServer() {
 //}
 
 func (n *NetworkManager) writePump() {
+	logger.Root.Infof("Starting writePump")
 	for {
 		select {
 		case pretendMsg, ok := <-n.needToSend:
@@ -939,4 +972,9 @@ func (n *NetworkManager) writePump() {
 			break
 		}
 	}
+	logger.Root.Infof("Exit the write pump")
+}
+
+func (n *NetworkManager) Close() {
+	n.signalInterruption <- true
 }

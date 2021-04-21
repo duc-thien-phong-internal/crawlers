@@ -1,4 +1,4 @@
-package cicblib
+package pega7lib
 
 import (
 	"github.com/duc-thien-phong-internal/crawlers/pkg/basecrawler"
