@@ -47,9 +47,9 @@ type Browser struct {
 	Type string
 }
 
-func CreateBrowser(withDocker bool, maxAge int64, maxIdleTime int64) *Browser {
-	logger.Root.Infof("Create selenium driver\n")
-	driver, err := GetSeleniumService(withDocker, "")
+func CreateBrowser(withDocker bool, maxAge int64, maxIdleTime int64, args map[string]interface{}) *Browser {
+	logger.Root.Infof("Create selenium driver with args: %+v\n", args)
+	driver, err := GetSeleniumService(withDocker, "", args)
 	if err != nil {
 		logger.Root.Infof("Could  not create selenium service\n")
 		return nil

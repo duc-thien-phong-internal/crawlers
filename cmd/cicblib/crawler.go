@@ -16,11 +16,11 @@ type Crawler struct {
 	Base
 }
 
-func NewCrawler(withDocker bool) *Crawler {
+func NewCrawler(withDocker bool, args map[string]interface{}) *Crawler {
 	p := Crawler{}
 	p.SetNeedToBeReplaced(false)
 
-	browser := my_selenium.CreateBrowser(withDocker, 24*60*60, 24*60*60)
+	browser := my_selenium.CreateBrowser(withDocker, 24*60*60, 24*60*60, args)
 	if browser == nil {
 		logger.Root.Errorf("Could not create selenium browser")
 		return nil
@@ -112,7 +112,7 @@ mainFor:
 				break mainFor
 			}
 
-			logger.Root.Infof("Browser `%s` Processes cicb %d", p.GetID(), meta.DataID)
+			logger.Root.Infof("Browser `%s` Processes app %s", p.GetID(), meta.DataID)
 
 			adapter.AddNumNeedToCrawl(-1)
 			if adapter.CheckIfExtractedBefore(meta.DataID) {

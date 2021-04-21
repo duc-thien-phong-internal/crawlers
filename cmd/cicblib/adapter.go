@@ -18,7 +18,7 @@ type Adapter struct {
 }
 
 // just a way to verify if Adapter implements all methods of IClientAdapter or not
-var test basecrawler.IClientAdapter = &Adapter{}
+var _ basecrawler.IClientAdapter = &Adapter{}
 
 func (Adapter) GetWorkerSoftwareSource() customer.SoftwareSource {
 	return customer.SoftwareCIB
@@ -28,11 +28,13 @@ func CreateAdapter() *Adapter {
 	baseAdapter := basecrawler.NewAdapter(nil, nil, nil)
 	//baseAdapter.CreateCrawlerFunc = baseAdapter.CreateCrawlerFunc
 
-	baseAdapter.BeforeCrawlingFunc = func(args interface{}) {
+	baseAdapter.BeforeCrawlingFunc = func(args interface{}) (bool, error) {
 		logger.Root.Infof("Need to implement BeforeCrawlingFunc of CICB")
+		return false, nil
 	}
-	baseAdapter.AfterCrawlingFunc = func(args interface{}) {
+	baseAdapter.AfterCrawlingFunc = func(args interface{}) (bool, error) {
 		logger.Root.Infof("Need to implement AfterCrawlingFunc of CICB")
+		return false, nil
 	}
 
 	adapter := &Adapter{
@@ -50,7 +52,7 @@ func CreateAdapter() *Adapter {
 
 func (c *Adapter) CreateCrawler(withDocker bool, args map[string]interface{}) (basecrawler.ICrawler, error) {
 	logger.Root.Infof("Create crawler from cicb adapter")
-	crawler := NewCrawler(withDocker)
+	crawler := NewCrawler(withDocker, args)
 	if withDocker && (crawler == nil || crawler.Browser == nil) {
 		return nil, errors.New("Could not create browser with docker")
 	}
@@ -79,7 +81,7 @@ func (c *Adapter) CreateCrawler(withDocker bool, args map[string]interface{}) (b
 }
 
 func (c *Adapter) CreateChecker(withDocker bool, args map[string]interface{}) (basecrawler.IChecker, error) {
-	checker := NewChecker(withDocker)
+	checker := NewChecker(withDocker, args)
 	if checker == nil {
 		return nil, errors.New("Could not create browser")
 	}

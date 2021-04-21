@@ -4,6 +4,7 @@ go 1.15
 
 require (
 	github.com/Microsoft/go-winio v0.4.16 // indirect
+	github.com/antchfx/htmlquery v1.2.3
 	github.com/containerd/containerd v1.4.4 // indirect
 	github.com/docker/distribution v2.7.1+incompatible // indirect
 	github.com/docker/docker v20.10.5+incompatible
@@ -22,5 +23,6 @@ require (
 	github.com/tebeka/selenium v0.9.9
 	go.mongodb.org/mongo-driver v1.5.0
 	go.uber.org/goleak v1.1.10
+	golang.org/x/net v0.0.0-20201021035429-f5854403a974
 	gopkg.in/yaml.v2 v2.2.8
 )

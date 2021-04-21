@@ -97,10 +97,10 @@ func SetupF1Browser(f1 *F1Browser, isWorker bool, d *BrowserManager) (err error)
 	return nil
 }
 
-func (d *BrowserManager) LaunchF1Browser(isWorker bool, withDocker bool) *F1Browser {
+func (d *BrowserManager) LaunchF1Browser(isWorker bool, withDocker bool, args map[string]interface{}) *F1Browser {
 	// curDir, _ := os.Getwd()
 	// geckoPath := filepath.Join(curDir, "drivers", GECKOFILE)
-	driver, err := GetSeleniumService(withDocker, "")
+	driver, err := GetSeleniumService(withDocker, "", args)
 	if err != nil {
 		logger.Root.Fatalf("Error when creating selenium driver. Error: %s\n", err)
 	}
@@ -127,7 +127,7 @@ func (d *BrowserManager) LaunchF1Browser(isWorker bool, withDocker bool) *F1Brow
 }
 
 // StartAutoCrawlerBrowser start a browser session that will be used to crawl data from F1 automatically
-func (d *BrowserManager) StartAutoCrawlerBrowser(withDocker bool) *F1Crawler {
+func (d *BrowserManager) StartAutoCrawlerBrowser(withDocker bool, args map[string]interface{}) *F1Crawler {
 	d.CrawlerInitializing = true
 	d.CrawlerInitializingTime = utils.GetCurrentTime().Unix()
 	defer func() {
@@ -136,7 +136,7 @@ func (d *BrowserManager) StartAutoCrawlerBrowser(withDocker bool) *F1Crawler {
 
 	var f1 *F1Browser
 	for f1 == nil {
-		f1 = d.LaunchF1Browser(false, withDocker)
+		f1 = d.LaunchF1Browser(false, withDocker, args)
 		if f1.checkStopRequestAndClose(false) {
 			break
 		}
@@ -151,7 +151,7 @@ func (d *BrowserManager) StartAutoCrawlerBrowser(withDocker bool) *F1Crawler {
 }
 
 // StartAutoWorkers start a browser session that will be used to crawl data from F1 automatically
-func (d *BrowserManager) StartAutoWorkers(defaultNumWorkers int, withDocker bool) {
+func (d *BrowserManager) StartAutoWorkers(defaultNumWorkers int, withDocker bool, args map[string]interface{}) {
 	// start the workers for searching profile by CMND
 	// numBrowsers := cfg.Application.NumWorkers
 	if configWorker == nil {
@@ -163,7 +163,7 @@ func (d *BrowserManager) StartAutoWorkers(defaultNumWorkers int, withDocker bool
 	}
 
 	// add a default browser to check id card, we add it here to provide the service faster
-	d.AddF1Browsers(configWorker.Value.NumWorkers, withDocker)
+	d.AddF1Browsers(configWorker.Value.NumWorkers, withDocker, args)
 }
 
 // StopAutoCrawlerBrowser stops a browser session that will be used to crawl data from F1 automatically
@@ -187,15 +187,15 @@ func (d *BrowserManager) StopAutoWorkers() error {
 }
 
 // AddF1Browser creates a new browser
-func (d *BrowserManager) AddF1Browser(withDocker bool) *F1Browser {
-	return d.LaunchF1Browser(true, withDocker)
+func (d *BrowserManager) AddF1Browser(withDocker bool, args map[string]interface{}) *F1Browser {
+	return d.LaunchF1Browser(true, withDocker, args)
 }
 
 // AddF1Browsers add multiple browsers
-func (d *BrowserManager) AddF1Browsers(numBrowsers int, withDocker bool) {
+func (d *BrowserManager) AddF1Browsers(numBrowsers int, withDocker bool, args map[string]interface{}) {
 	if numBrowsers > 0 {
 		c := 0
-		if b := d.AddF1Browser(withDocker); b != nil {
+		if b := d.AddF1Browser(withDocker, args); b != nil {
 			c++
 			logger.Root.Infof("Started browser %d OK\n", c)
 			b.Type = TypeWorker
@@ -231,7 +231,7 @@ func (d *BrowserManager) AddF1Browsers(numBrowsers int, withDocker bool) {
 						setSystemStatus(Stopped, WORKER)
 						break
 					}
-					if b := d.AddF1Browser(withDocker); b != nil {
+					if b := d.AddF1Browser(withDocker, args); b != nil {
 						b.Type = TypeWorker
 						logger.Root.Infof("Started browser %d OK\n", c)
 						c++
@@ -437,7 +437,7 @@ func (d *BrowserManager) RefreshAllWorkers(withDocker bool) {
 				if b.NeedToBeReplaced() && b.IsActive() {
 					// numNewBrowsers++
 					logger.Root.Info("Created new browser")
-					for d.AddF1Browser(withDocker) == nil {
+					for d.AddF1Browser(withDocker, nil) == nil {
 						if configWorker.Value.StatusRequested == Stopped {
 							break
 						}
@@ -552,7 +552,7 @@ func (d *BrowserManager) StartCrawlerWatcher(withDocker bool) {
 
 			if lastStatus == Stopped && configCrawler.Value.StatusRequested == Starting {
 				logger.Root.Infof("Staring the crawler...\n")
-				c := d.StartAutoCrawlerBrowser(withDocker)
+				c := d.StartAutoCrawlerBrowser(withDocker, nil)
 				if err := c.Crawl(); err != nil {
 					logger.Root.Errorf("Error when crawling. Error: %s\n", err)
 				}
@@ -632,7 +632,7 @@ func (d *BrowserManager) StartWorkerWatcher(defaultNumWorkers int, withDocker bo
 
 			if (lastStatus == Stopped || len(d.Workers) == 0) && configWorker.Value.StatusRequested == Starting {
 				logger.Root.Infof("Staring the worker...\n")
-				d.StartAutoWorkers(defaultNumWorkers, withDocker)
+				d.StartAutoWorkers(defaultNumWorkers, withDocker, nil)
 				logger.Root.Infof("Started the worker...\n")
 			} else if (lastStatus == Running || needToClose) && configWorker.Value.StatusRequested == Stopping {
 				logger.Root.Infof("Stopping the worker...\n")

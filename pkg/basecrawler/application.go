@@ -11,6 +11,7 @@ import (
 	"github.com/duc-thien-phong/techsharedservices/logger"
 	"github.com/duc-thien-phong/techsharedservices/models"
 	"github.com/duc-thien-phong/techsharedservices/models/customer"
+	nsq_models "github.com/duc-thien-phong/techsharedservices/nsq/models"
 	"github.com/duc-thien-phong/techsharedservices/utils"
 	"io/ioutil"
 	"math/rand"
@@ -97,25 +98,9 @@ func (mc *Application) GetConfig() *Config {
 func (mc *Application) loadConfigFromDisk() {
 
 	logger.Root.Infof(" Reading configuration...\n")
-	c := Config{
-		WorkerConfigs: models.CreateNewDataClientConfig(),
-		OServer: OurServer{
-			Scheme: "http",
-			Host:   "localhost",
-			Port:   58765,
-		},
-		App: App{
-			Host: "localhost",
-			Port: 44445,
-		},
-		Tunnel: TunnelConfig{
-			SSHPort:    22,
-			LocalPort:  55781,
-			RemotePort: 55781,
-		},
 
-		NsqConfig: mc.config.NsqConfig,
-	}
+	c := *NewConfig()
+	c.NsqConfig = mc.config.NsqConfig
 
 	var curDir = getCurrentPath()
 	if curDir == "" {
@@ -378,11 +363,11 @@ func (mc *Application) sendPingMessage() {
 				if err := json.Unmarshal(dbByte, &pingPongData); err == nil && needToGetAppConfig {
 					if pingPongData.ApplicationConfig != nil {
 						logger.Root.Infof("Updating worker configuration....\n")
-						oldConfig := mc.config.WorkerConfigs
+
 						mc.config.WorkerConfigs = *pingPongData.ApplicationConfig
 						logger.Root.Infof("Last crawling date: %s", mc.config.WorkerConfigs.Crawler.LastCrawlingDate.Format(time.RFC1123))
 						mc.NetworkManager.fetchConfigFromServer = true
-						mc.compareRunningModesAndStartCrawlerAndChecker(oldConfig)
+						mc.compareRunningModesAndStartCrawlerAndChecker()
 						mc.NetworkManager.lastTimeGetConfigFromServer = utils.GetCurrentTime()
 					}
 				}
@@ -504,6 +489,29 @@ func (mc *Application) onConnectionToOurServerChanged(v EventValue) {
 	logger.Root.Infof("Connection to our server changed: %s", v)
 }
 
+func (mc *Application) onReceivingRequestCommand(v EventValue) {
+	logger.Root.Infof("Receiving command request")
+	msg, ok := v.(nsq_models.Message)
+	if !ok {
+		logger.Root.Errorf("Wrong value for event handler onReceivingRequestCommand")
+		return
+	}
+
+	switch msg.Command.SubType {
+	case commands.SubTypeChangeAppStatus:
+		logger.Root.Infof("Received message ChangeApppStatus")
+		go mc.handleRequestChangingAppStatus(msg)
+	case commands.SubTypeExecuteRemoteCommand:
+		logger.Root.Infof("Received message ExecuteRemoteCommand")
+		go mc.handleRequestRunCommand(msg)
+	case commands.SubTypeChangeWorkerAppConfig:
+		logger.Root.Infof("Received message ChangeAppConfig")
+		go mc.handleRequestChangingAppConfig(msg)
+	default:
+		go mc.client.HandleRequest(msg)
+	}
+}
+
 // Start runs the crawler client with some options
 func (mc *Application) Start(client IClientAdapter, cachedIdsFile string, debugMode bool, onClosing func()) {
 	mc.cachedIdsFile = cachedIdsFile
@@ -515,6 +523,7 @@ func (mc *Application) Start(client IClientAdapter, cachedIdsFile string, debugM
 
 	mc.NetworkManager.RegisterEventHandler(EventFetchingAccountDone, mc.onFetchedAccounts)
 	mc.NetworkManager.RegisterEventHandler(EventConnectionToOurServerChanged, mc.onConnectionToOurServerChanged)
+	mc.NetworkManager.RegisterEventHandler(EventOnReceivingRequestCommand, mc.onReceivingRequestCommand)
 
 	defer func() {
 		if r := recover(); r != nil {
@@ -633,6 +642,7 @@ func (mc *Application) _startGettingData() {
 		mc.NetworkManager.RefreshToken(false)
 		mc.client.StartOrStopAllCrawlers(true)
 		mc.adjustCrawlerStatus(true)
+
 		errCrawler = mc.startExtractingData()
 		if errCrawler == ErrNoUsableAccount {
 			if mc.NetworkManager.isTunnelStarted() {
@@ -855,10 +865,14 @@ func makeRequest(url string, method string, payload interface{}) (string, error)
 // SendAddingApplicationsReq sends the application to server to add or edit
 func (mc *Application) SendAddingApplicationsReq(apps []customer.Application, retries int, callback func()) {
 	if mc.config.NsqConfig.SystemNsqID != "" && mc.config.NsqConfig.MyNsqID != "" {
-		cm := commandmanager.CreateMessageCommand(nil, apps, commands.TypeRequest, commands.SubTypeAddCustomerApplications, mc.config.NsqConfig.MyNsqID, mc.config.NsqConfig.SystemNsqID, mc.config.NsqConfig.MainChannel)
-		go func() {
+		cm := commandmanager.CreateMessageCommand(nil, apps,
+			commands.TypeRequest, commands.SubTypeAddCustomerApplications,
+			mc.config.NsqConfig.MyNsqID, mc.config.NsqConfig.SystemNsqID, mc.config.NsqConfig.MainChannel)
 
+		go func() {
+			logger.Root.Debugf("before Sending message")
 			err, res := mc.NetworkManager.SendMessage(cm, 60)
+			logger.Root.Debugf("after Sending message")
 			if err != nil {
 				logger.Root.Infof("Sending adding application error: %s retries=%d\n", err, retries)
 				mc.handleTheError(err)

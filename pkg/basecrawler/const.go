@@ -189,8 +189,9 @@ const (
 )
 
 var (
-	ErrMissingField   = errors.New("Missing field")
-	ErrEmptyContent   = errors.New("Empty content")
-	ErrInvalidSession = errors.New("Invalid session")
-	ErrTimeout        = errors.New("Timeout")
+	ErrMissingField    = errors.New("Missing field")
+	ErrEmptyContent    = errors.New("Empty content")
+	ErrInvalidSession  = errors.New("Invalid session")
+	ErrTimeout         = errors.New("Timeout")
+	ErrInvalidProducer = errors.New("invalid producer")
 )

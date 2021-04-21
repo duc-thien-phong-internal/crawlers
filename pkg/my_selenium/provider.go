@@ -13,6 +13,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -115,7 +116,7 @@ func pickUnusedPort() (int, error) {
 }
 
 // GetSeleniumService returns a driver instance
-func GetSeleniumService(withDocker bool, geckoPath string) (driver DriverInfo, err error) {
+func GetSeleniumService(withDocker bool, geckoPath string, args map[string]interface{}) (driver DriverInfo, err error) {
 
 	port, err := pickUnusedPort()
 	if err != nil {
@@ -125,6 +126,15 @@ func GetSeleniumService(withDocker bool, geckoPath string) (driver DriverInfo, e
 	var service *selenium.Service
 	var wd *selenium.WebDriver
 	var containerID string
+	var containerName string = "selenium-"
+	if args != nil {
+		if name, ok := args["containerName"]; ok && name != "" {
+			containerName += fmt.Sprint(name)
+		}
+	}
+	if containerName == "selenium-" {
+		containerName += fmt.Sprint(time.Now().Unix())
+	}
 
 	if !withDocker {
 		curDir, _ := osext.ExecutableFolder()
@@ -195,6 +205,7 @@ func GetSeleniumService(withDocker bool, geckoPath string) (driver DriverInfo, e
 		}
 
 		hostConfig := &container.HostConfig{
+			AutoRemove: true,
 			PortBindings: nat.PortMap{
 				"4444/tcp": []nat.PortBinding{
 					{
@@ -205,7 +216,7 @@ func GetSeleniumService(withDocker bool, geckoPath string) (driver DriverInfo, e
 			},
 		}
 
-		resp, err := cli.ContainerCreate(ctx, config, hostConfig, nil, nil, "")
+		resp, err := cli.ContainerCreate(ctx, config, hostConfig, nil, nil, containerName)
 		if err != nil {
 			logger.Root.Errorf("Could not create container: %v", err)
 			return DriverInfo{}, nil
@@ -227,7 +238,7 @@ func GetSeleniumService(withDocker bool, geckoPath string) (driver DriverInfo, e
 	sessionURL := fmt.Sprintf("http://localhost:%d/wd/hub", port)
 	logger.Root.Infof("Session URL:%s\n", sessionURL)
 	for retries < 3 {
-		wd, err = AttachToSession(sessionURL)
+		wd, err = AttachToSession(sessionURL, args)
 		if err == nil && wd != nil {
 			logger.Root.Infof("Using this session\n")
 			break
@@ -285,7 +296,7 @@ func startDockerContainerUsingCmd(port int) error {
 }
 
 // AttachToSession attach to the current web driver
-func AttachToSession(sessionURL string) (wd *selenium.WebDriver, err error) {
+func AttachToSession(sessionURL string, args map[string]interface{}) (wd *selenium.WebDriver, err error) {
 	// Connect to the WebDriver instance running locally.
 	caps := selenium.Capabilities{
 		"browserName": "firefox",
@@ -295,7 +306,17 @@ func AttachToSession(sessionURL string) (wd *selenium.WebDriver, err error) {
 	f.Args = append(f.Args, "--disable-infobars")
 	f.Args = append(f.Args, "--disable-extensions")
 	f.Args = append(f.Args, "--disable-gpu")
-	f.Args = append(f.Args, "--headless")
+	showGUI := false
+	if args != nil {
+		if v, ok := args["showGUIBrowser"]; ok {
+			if show, ok := v.(bool); ok && show {
+				showGUI = true
+			}
+		}
+	}
+	if !showGUI {
+		f.Args = append(f.Args, "--headless")
+	}
 	f.Args = append(f.Args, "--disable-popup-blocking")
 	f.Args = append(f.Args, "--profile-directory=\""+os.TempDir()+"\"")
 
@@ -307,6 +328,25 @@ func AttachToSession(sessionURL string) (wd *selenium.WebDriver, err error) {
 	// f.Args = append(f.Args, "user_agent = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10.11; rv:46.0) Gecko/20100101 Firefox/46.0'")
 	if f.Prefs == nil {
 		f.Prefs = make(map[string]interface{})
+	}
+
+	f.Prefs["geo.enabled"] = false
+	if args != nil {
+		if host, ok := args["proxyHost"]; ok && host != "" {
+			if port, ok := args["proxyPort"]; ok && port != "" {
+				f.Prefs["network.proxy.type"] = 1
+				f.Prefs["network.proxy.socks_version"] = 5
+				f.Prefs["network.proxy.socks"] = fmt.Sprintf("%v", host)
+				f.Prefs["network.proxy.socks_port"], _ = strconv.Atoi(fmt.Sprint(port))
+			}
+		}
+		//if proxyHost+proxyPort != "" {
+		//	caps.AddProxy(selenium.Proxy{
+		//		Type:         selenium.Manual,
+		//		SOCKS:        fmt.Sprintf("%v:%v", proxyHost, proxyPort),
+		//		SOCKSVersion: 5,
+		//	})
+		//}
 	}
 	// f.Prefs["browser.cache.disk.enable"] = false
 	// f.Prefs["browser.cache.memory.enable"] = false

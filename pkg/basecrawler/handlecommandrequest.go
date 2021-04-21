@@ -15,12 +15,12 @@ func (mc *Application) handleRequestChangingAppStatus(msg nsq_models.Message) {
 
 	body := msg.GetRawDataFromBody()
 	if err := json.Unmarshal([]byte(body), &changeAppStatusReq); err == nil {
-		oldConfig := mc.config.WorkerConfigs
-		requestedStatus := changeAppStatusReq.CrawlerStatus
-		mc.config.WorkerConfigs.Crawler.RequestedStatus = requestedStatus
-		mc.compareRunningModesAndStartCrawlerAndChecker(oldConfig)
 
-		logger.Root.Infof("Set new app status to %s\n", requestedStatus)
+		mc.config.WorkerConfigs.Crawler.RequestedStatus = changeAppStatusReq.CrawlerStatus
+		mc.config.WorkerConfigs.Checker.RequestedStatus = changeAppStatusReq.CheckerStatus
+		mc.compareRunningModesAndStartCrawlerAndChecker()
+
+		logger.Root.Infof("Set new app status to %s\n", changeAppStatusReq.CrawlerStatus)
 		var responseObj commands.CommandResponseChangeAppStatus
 		if err := mc.writeCurrentConfig(); err != nil {
 			logger.Root.Errorf("Could not write the new app status\n")
@@ -42,23 +42,27 @@ func (mc *Application) handleRequestChangingAppStatus(msg nsq_models.Message) {
 	}
 }
 
-func (mc *Application) compareRunningModesAndStartCrawlerAndChecker(oldConfig models.DataClientConfig) {
+// compare the requestedStatus and the current status
+// then give decision to stop or start all crawlers/checkers
+func (mc *Application) compareRunningModesAndStartCrawlerAndChecker() {
 	newConfig := &mc.config.WorkerConfigs
 
-	if (oldConfig.Crawler.RequestedStatus == models.WorkerStopping || oldConfig.Crawler.RequestedStatus == models.WorkerStopped) && (newConfig.Crawler.RequestedStatus == models.WorkerStarting || newConfig.Crawler.RequestedStatus == models.WorkerRunning) {
+	if (newConfig.Crawler.Status == models.WorkerStopping || newConfig.Crawler.Status == models.WorkerStopped) &&
+		(newConfig.Crawler.RequestedStatus == models.WorkerStarting || newConfig.Crawler.RequestedStatus == models.WorkerRunning) {
 		go func() {
 			mc.client.StartOrStopAllCrawlers(true)
-			newConfig.Crawler.RequestedStatus = models.WorkerRunning
+			newConfig.Crawler.Status = models.WorkerRunning
 			mc.writeCurrentConfig()
 			//mc.sendPingMessage()
 		}()
 		// newConfig.Crawler.RunningMode = models.RunningModeManually
 		// logger.Root.Infof("Change runnning mode of crawler to manually")
 	}
-	if (oldConfig.Checker.RequestedStatus == models.WorkerStopping || oldConfig.Checker.RequestedStatus == models.WorkerStopped) && (newConfig.Checker.RequestedStatus == models.WorkerStarting || newConfig.Checker.RequestedStatus == models.WorkerRunning) {
+	if (newConfig.Checker.Status == models.WorkerStopping || newConfig.Checker.Status == models.WorkerStopped) &&
+		(newConfig.Checker.RequestedStatus == models.WorkerStarting || newConfig.Checker.RequestedStatus == models.WorkerRunning) {
 		go func() {
 			mc.client.StartOrStopAllCheckers(true)
-			newConfig.Checker.RequestedStatus = models.WorkerRunning
+			newConfig.Checker.Status = models.WorkerRunning
 			mc.writeCurrentConfig()
 			//mc.sendPingMessage()
 		}()
@@ -66,20 +70,22 @@ func (mc *Application) compareRunningModesAndStartCrawlerAndChecker(oldConfig mo
 		// logger.Root.Infof("Change runnning mode of checker to manually")
 	}
 
-	if (oldConfig.Crawler.RequestedStatus == models.WorkerStarting || oldConfig.Crawler.RequestedStatus == models.WorkerRunning) && (newConfig.Crawler.RequestedStatus == models.WorkerStopping || newConfig.Crawler.RequestedStatus == models.WorkerStopped) {
+	if (newConfig.Crawler.Status == models.WorkerStarting || newConfig.Crawler.Status == models.WorkerRunning) &&
+		(newConfig.Crawler.RequestedStatus == models.WorkerStopping || newConfig.Crawler.RequestedStatus == models.WorkerStopped) {
 		go func() {
 			mc.client.StartOrStopAllCrawlers(false)
-			newConfig.Crawler.RequestedStatus = models.WorkerStopped
+			newConfig.Crawler.Status = models.WorkerStopped
 			mc.writeCurrentConfig()
 			//mc.sendPingMessage()
 		}()
 		// newConfig.Crawler.RunningMode = models.RunningModeManually
 		// logger.Root.Infof("Change runnning mode of crawler to manually")
 	}
-	if (oldConfig.Checker.RequestedStatus == models.WorkerStarting || oldConfig.Checker.RequestedStatus == models.WorkerRunning) && (newConfig.Checker.RequestedStatus == models.WorkerStopping || newConfig.Checker.RequestedStatus == models.WorkerStopped) {
+	if (newConfig.Checker.Status == models.WorkerStarting || newConfig.Checker.Status == models.WorkerRunning) &&
+		(newConfig.Checker.RequestedStatus == models.WorkerStopping || newConfig.Checker.RequestedStatus == models.WorkerStopped) {
 		go func() {
 			mc.client.StartOrStopAllCheckers(false)
-			newConfig.Checker.RequestedStatus = models.WorkerStopped
+			newConfig.Checker.Status = models.WorkerStopped
 			mc.writeCurrentConfig()
 			//mc.sendPingMessage()
 		}()
@@ -95,10 +101,9 @@ func (mc *Application) handleRequestChangingAppConfig(msg nsq_models.Message) {
 	body := msg.GetRawDataFromBody()
 	if err := json.Unmarshal([]byte(body), &req); err == nil {
 		cf := req.Config
-		oldConfig := mc.config.WorkerConfigs
 		mc.config.WorkerConfigs = cf
 		logger.Root.Infof("Change app config to %v\n", mc.config)
-		mc.compareRunningModesAndStartCrawlerAndChecker(oldConfig)
+		mc.compareRunningModesAndStartCrawlerAndChecker()
 
 		var responseObj commands.CommandResponseChangeAppStatus
 		if err := mc.writeCurrentConfig(); err != nil {
