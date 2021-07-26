@@ -3,8 +3,7 @@
 package main
 
 import (
-	"dtp/pkg/osinfo"
-
+	"github.com/duc-thien-phong-internal/crawlers/pkg/osinfo"
 	"github.com/tebeka/selenium"
 )
 

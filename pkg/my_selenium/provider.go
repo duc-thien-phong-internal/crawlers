@@ -46,6 +46,7 @@ type DriverInfo struct {
 	Service           *selenium.Service   `json:"-"`
 	Driver            *selenium.WebDriver `json:"-"`
 	DockerContainerID string              `json:"containerID"`
+	ContainerName     string
 }
 
 var drivers map[int]DriverInfo
@@ -64,6 +65,7 @@ func (driver DriverInfo) Close() {
 		// if err := (*driver.Driver).Close(); err != nil {
 		// 	logger.Root.Errorf("Could not close selenium driver: %v", err)
 		// }
+		(*driver.Driver).Close()
 		if err := (*driver.Driver).Quit(); err != nil {
 			logger.Root.Errorf("Could not quit selenium driver %v", err)
 		}
@@ -133,8 +135,9 @@ func GetSeleniumService(withDocker bool, geckoPath string, args map[string]inter
 		}
 	}
 	if containerName == "selenium-" {
-		containerName += fmt.Sprint(time.Now().Unix())
+		containerName += fmt.Sprint(time.Now().UnixNano())
 	}
+	logger.Root.Infof("trying to start container with name `%s`", containerName)
 
 	if !withDocker {
 		curDir, _ := osext.ExecutableFolder()
@@ -204,16 +207,30 @@ func GetSeleniumService(withDocker bool, geckoPath string, args map[string]inter
 			// },
 		}
 
-		hostConfig := &container.HostConfig{
-			AutoRemove: true,
-			PortBindings: nat.PortMap{
-				"4444/tcp": []nat.PortBinding{
-					{
-						HostIP:   "localhost",
-						HostPort: fmt.Sprint(port),
-					},
+		hostPortBinding := nat.PortMap{
+			"4444/tcp": []nat.PortBinding{
+				{
+					HostIP:   "localhost",
+					HostPort: fmt.Sprint(port),
 				},
 			},
+		}
+		if args != nil {
+			if host, ok := args["proxyHost"]; ok && host != "" {
+				if port, ok := args["proxyPort"]; ok && port != "" {
+					hostPortBinding[nat.Port(fmt.Sprintf("%v/tcp", port))] = []nat.PortBinding{
+						{
+							HostIP:   "localhost",
+							HostPort: fmt.Sprint(port),
+						},
+					}
+				}
+			}
+		}
+
+		hostConfig := &container.HostConfig{
+			AutoRemove:   true,
+			PortBindings: hostPortBinding,
 		}
 
 		resp, err := cli.ContainerCreate(ctx, config, hostConfig, nil, nil, containerName)
@@ -256,6 +273,7 @@ func GetSeleniumService(withDocker bool, geckoPath string, args map[string]inter
 		} else {
 			if wd != nil {
 				logger.Root.Infof("Quit selenium driver\n")
+				(*wd).Close()
 				if err := (*wd).Quit(); err != nil {
 					logger.Root.Errorf("Could not quit selenium driver %v", err)
 				}
@@ -274,7 +292,12 @@ func GetSeleniumService(withDocker bool, geckoPath string, args map[string]inter
 		logger.Root.Errorf("Could not create selenium web driver")
 	}
 
-	return DriverInfo{Driver: wd, Service: service, URL: sessionURL, Session: (*wd).SessionID(), DockerContainerID: containerID}, err
+	return DriverInfo{
+		Driver: wd, Service: service,
+		URL: sessionURL, Session: (*wd).SessionID(),
+		DockerContainerID: containerID,
+		ContainerName:     containerName,
+	}, err
 }
 
 func startDockerContainerUsingCmd(port int) error {
@@ -299,10 +322,12 @@ func startDockerContainerUsingCmd(port int) error {
 func AttachToSession(sessionURL string, args map[string]interface{}) (wd *selenium.WebDriver, err error) {
 	// Connect to the WebDriver instance running locally.
 	caps := selenium.Capabilities{
-		"browserName": "firefox",
+		"browserName":         "firefox",
+		"acceptInsecureCerts": true,
 	}
 
 	f := firefox.Capabilities{}
+
 	f.Args = append(f.Args, "--disable-infobars")
 	f.Args = append(f.Args, "--disable-extensions")
 	f.Args = append(f.Args, "--disable-gpu")
@@ -331,9 +356,16 @@ func AttachToSession(sessionURL string, args map[string]interface{}) (wd *seleni
 	}
 
 	f.Prefs["geo.enabled"] = false
+	f.Prefs["security.enterprise_roots.enabled"] = true
+	f.Prefs["security.insecure_field_warning.contextual.enabled"] = false
+	f.Prefs["security.certerrors.permanentOverride"] = false
+	f.Prefs["network.stricttransportsecurity.preloadlist"] = false
+	f.Prefs["acceptInsecureCerts"] = true
+	f.Prefs["accept_untrusted_certs"] = true
 	if args != nil {
 		if host, ok := args["proxyHost"]; ok && host != "" {
 			if port, ok := args["proxyPort"]; ok && port != "" {
+				logger.Root.Infof("Setting proxy for selenium")
 				f.Prefs["network.proxy.type"] = 1
 				f.Prefs["network.proxy.socks_version"] = 5
 				f.Prefs["network.proxy.socks"] = fmt.Sprintf("%v", host)

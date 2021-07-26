@@ -15,8 +15,8 @@ const (
 	// ChannelSocketPath the path in the URL to connect to the socket
 	ChannelSocketPath = "/software/chat/channel/%v"
 
-	ServerFetchAccountURL = "%s://%s:%d/software/list-accs?loginTo=%v"
-	ServerFetchConfigURL  = "%s://%s:%d/software/get-config?loginTo=%v"
+	ServerFetchAccountURL = "%s://%s:%d/software/list-accs?appid=%v"
+	ServerFetchConfigURL  = "%s://%s:%d/software/get-config?appid=%v"
 	ServerProfilesURL     = "%s://%s:%d/software/new"
 
 	// config Config

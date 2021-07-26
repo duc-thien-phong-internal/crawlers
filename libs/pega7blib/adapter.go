@@ -5,7 +5,7 @@ import (
 	"errors"
 	"github.com/duc-thien-phong-internal/crawlers/pkg/basecrawler"
 	"github.com/duc-thien-phong/techsharedservices/logger"
-	"github.com/duc-thien-phong/techsharedservices/models/customer"
+	"github.com/duc-thien-phong/techsharedservices/models/softwareclient"
 	"github.com/duc-thien-phong/techsharedservices/utils"
 	"github.com/golang/glog"
 	"strings"
@@ -22,8 +22,8 @@ type Adapter struct {
 // just a way to verify if Adapter implements all methods of IClientAdapter or not
 var _ basecrawler.IClientAdapter = &Adapter{}
 
-func (Adapter) GetWorkerSoftwareSource() customer.SoftwareSource {
-	return customer.SoftwarePega7
+func (Adapter) GetWorkerSoftwareSource() softwareclient.AppNoType {
+	return softwareclient.ApplicationPega7
 }
 
 func CreateAdapter() *Adapter {
@@ -98,8 +98,8 @@ func (c *Adapter) afterCrawling(args interface{}) (canContinue bool, err error) 
 func (c *Adapter) CreateCrawler(withDocker bool, args map[string]interface{}) (basecrawler.ICrawler, error) {
 	logger.Root.Infof("Create crawler from cicb adapter")
 	crawler := NewCrawler(withDocker, args)
-	if withDocker && (crawler == nil || crawler.Browser == nil) {
-		return nil, errors.New("Could not create browser with docker")
+	if crawler == nil || crawler.Browser == nil {
+		return nil, errors.New("Could not create browser")
 	}
 
 	crawler.WorkerAdapter = crawler

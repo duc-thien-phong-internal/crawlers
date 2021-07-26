@@ -3,13 +3,16 @@ package basecrawler
 import (
 	"github.com/duc-thien-phong/techsharedservices/models"
 	"github.com/duc-thien-phong/techsharedservices/models/customer"
+	"github.com/duc-thien-phong/techsharedservices/models/softwareclient"
 	nsq_models "github.com/duc-thien-phong/techsharedservices/nsq/models"
 	"math/rand"
 )
 
 type MockClient struct{}
 
-func (MockClient) GetWorkerSoftwareSource() customer.SoftwareSource { return customer.SoftwareUnknown }
+func (MockClient) GetWorkerSoftwareSource() softwareclient.AppNoType {
+	return softwareclient.ApplicationUnknown
+}
 
 // SetOS(os osinfo.OSType)
 func (MockClient) Init(a *Application) {}

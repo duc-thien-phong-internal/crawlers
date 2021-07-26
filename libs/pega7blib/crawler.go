@@ -45,7 +45,7 @@ func (p *Crawler) Prepare() error {
 }
 
 func (p *Crawler) getMaxLifeDuration() int {
-	N := 600
+	N := 4 * 60 // 4 hours
 	if d, ok := p.ClientAdapter.GetHostApplication().GetWorkerConfig().OtherConfig["crawlerMaxLifeDuration"]; ok {
 		if v, ok := d.(float64); ok {
 			N = int(v)
@@ -97,6 +97,9 @@ func (p *Crawler) ProcessPage(config *basecrawler.Config, pageSize int) (workIDs
 		return
 	}
 	workIDs = p.parsePageToGetWorkIDs("<html>" + pageContent + "</html>")
+	if len(workIDs) == 0 && hasNextPage {
+		logger.Root.Warnf("Something weird happen. There is no workids but we have the next page")
+	}
 	return
 }
 
@@ -135,15 +138,15 @@ mainFor:
 			logger.Root.Infof("Set crawler `%s` to be replaced", p.GetID())
 			break mainFor
 		case meta := <-adapter.NeedToCrawled:
+			adapter.AddNumNeedToCrawl(-1)
 			if meta.DataID == "" {
 				break mainFor
 			}
 
 			logger.Root.Infof("Browser `%s` Processes app %v", p.GetID(), meta.DataID)
 
-			adapter.AddNumNeedToCrawl(-1)
-			if adapter.CheckIfExtractedBefore(meta.DataID) {
-				logger.Root.Infof("`%s` Skips app %s", p.GetID(), meta.DataID)
+			if adapter.CheckIfExtractedBefore(meta.DataID) || meta.Tried >= 7 {
+				logger.Root.With("crawlerID", p.GetID()).Infof("`%s` Skips app %s. Current tried=%d", p.GetID(), meta.DataID, meta.Tried)
 				break
 			}
 
@@ -170,9 +173,9 @@ mainFor:
 				if err == ErrInvalidSession {
 					p.SetNeedToBeReplaced(true)
 				}
-				logger.Root.Infof("Send application profile %s back to the queue", meta.DataID)
-				adapter.NeedToCrawled <- meta
-				adapter.AddNumNeedToCrawl(1)
+				logger.Root.With("crawlerID", p.GetID()).Infof("Send application profile %s back to the queue", meta.DataID)
+				meta.Tried++
+				adapter.AddCrawlingRequestBackToTheQueue(meta)
 			}
 		default:
 			break
@@ -206,7 +209,7 @@ func (p *Crawler) setTheStartDayToCrawl(productOptions string) error {
 		today = time.Unix(lastNDaysUnix, 0)
 	} else {
 		logger.Root.Infof("use the last crawling time")
-		today = time.Unix(lastTimeRunningCrawlerUnix-24*60*60, 0) // shift left 2 hour to make sure we get everthing
+		today = time.Unix(lastTimeRunningCrawlerUnix-4*60*60, 0) // shift left 2 hour to make sure we get everthing
 	}
 	logger.Root.Infof("Trying to get data from date %v\n", today)
 
@@ -275,44 +278,20 @@ func (p *Crawler) gotoListUI() error {
 		(*p.Browser.DriverInfo.Driver).ExecuteScript("document.title = '"+p.GetID()+"'", []interface{}{})
 	}()
 
-	err := basecrawler.WaitUntilElementDisplay(d, "//*[contains(@data-click, 'convertToList')]|//*[contains(@data-click, 'Code-Pega-List') and contains(@data-click, 'pyReportContentPage')]", 120, 1, 10, 3)
+	err := basecrawler.WaitUntilElementDisplay(d, "//tr[@id='GrandTotal']/td[2]", 120, 1, 10, 3)
 	if err != nil {
-		logger.Root.Errorf("Could not find the List button")
+		logger.Root.Errorf("Could not find the total number of applications")
 
 		return err
 	}
 
-	menuActivator, err := d.FindElement(selenium.ByXPATH, "//*[contains(@data-click, 'Code-Pega-List') and contains(@data-click, 'pyReportContentPage')]")
+	menuActivator, err := d.FindElement(selenium.ByXPATH, "//tr[@id='GrandTotal']/td[2]")
 	// if there is a button that activates the menu containing the item "List"
 	if err == nil {
 		menuActivator.MoveTo(0, 0)
 		menuActivator.Click()
 		time.Sleep(300 * time.Millisecond)
-		logger.Root.Infof("Clicked on the menu activator")
-	}
-
-	elm, err := d.FindElement(selenium.ByXPATH, "//*[contains(@data-click, 'convertToList')]")
-	if err != nil {
-		logger.Root.Errorf("Could not find the List button")
-		(*p.Browser.DriverInfo.Driver).ExecuteScript("document.title = '"+p.GetID()+"'", []interface{}{})
-		return err
-	}
-	elm.MoveTo(0, 0)
-	elm.Click()
-	time.Sleep(1 * time.Second)
-
-	// wait the modal appear
-	err = basecrawler.WaitUntilElementDisplay(d, "//*[@id='ModalButtonSubmit']", 120, 1, 10, 3)
-
-	if err != nil {
-		logger.Root.Error("Could not found the confirmation modal to switch to list UI")
-		return err
-	}
-
-	submitBtn, _ := d.FindElement(selenium.ByXPATH, "//*[@id='ModalButtonSubmit']")
-	if submitBtn != nil {
-		submitBtn.MoveTo(0, 0)
-		submitBtn.Click()
+		logger.Root.Infof("Clicked on the the number of total number of application")
 	}
 
 	time.Sleep(3 * time.Second)
@@ -533,7 +512,9 @@ func (p *Crawler) fetchPageWithBrowser(page int, pageSize int) (string, bool, er
 	}
 	logger.Root.Infof("finish getting page %d with pagesize %d", page, pageSize)
 
-	return pageContent, strings.Contains(pageContent, "Next Page"), nil
+	hasNextPage := strings.Contains(pageContent, "Next Page")
+	logger.Root.Infof("Current page: %d Has next page: %v", page, hasNextPage)
+	return pageContent, hasNextPage, nil
 
 }
 
@@ -597,7 +578,7 @@ func (p *Crawler) parsePageToGetWorkIDs(content string) []string {
 		return []string{}
 	}
 
-	trElements := htmlquery.Find(doc, "//*[@id='gridLayoutTable']//tr[contains(@id, '$PpyReportContentPage$ppxResults$')]")
+	trElements := htmlquery.Find(doc, "//*[@id='gridLayoutTable']//table[@id='bodyTbl_right']//tr")
 	if pzHarnessIDElm := htmlquery.FindOne(doc, "//input[@id='pzHarnessID']"); pzHarnessIDElm != nil {
 		newpzHarnessID := htmlquery.SelectAttr(pzHarnessIDElm, "value")
 		if newpzHarnessID != "" {
@@ -607,13 +588,15 @@ func (p *Crawler) parsePageToGetWorkIDs(content string) []string {
 	}
 
 	workIDs := []string{}
-	for _, tr := range trElements {
-		tdWorkID := htmlquery.FindOne(tr, "//td[@data-attribute-name='Work ID']")
+	for i, tr := range trElements {
+		tdWorkID := htmlquery.FindOne(tr, "//td[@data-attribute-name='ID']")
 		if tdWorkID != nil {
 			workID := strings.Trim(htmlquery.InnerText(tdWorkID), " \n\t")
 			workIDs = append(workIDs, workID)
 		} else {
-			logger.Root.Errorf("Could not found element `%s`", "//td[@data-attribute-name='Work ID']")
+			if i > 0 {
+				logger.Root.Errorf("Could not found element `%s`", "//td[@data-attribute-name='Work ID']")
+			}
 		}
 	}
 

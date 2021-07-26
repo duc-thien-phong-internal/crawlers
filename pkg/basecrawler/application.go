@@ -11,6 +11,7 @@ import (
 	"github.com/duc-thien-phong/techsharedservices/logger"
 	"github.com/duc-thien-phong/techsharedservices/models"
 	"github.com/duc-thien-phong/techsharedservices/models/customer"
+	"github.com/duc-thien-phong/techsharedservices/models/softwareclient"
 	nsq_models "github.com/duc-thien-phong/techsharedservices/nsq/models"
 	"github.com/duc-thien-phong/techsharedservices/utils"
 	"io/ioutil"
@@ -58,7 +59,7 @@ func NewApplication(
 	checkConnFunc func() ConnectionState,
 	openTunnelFunc func() error,
 	closeFunnelFunc func() error,
-	workerSoftwareSource customer.SoftwareSource,
+	workerSoftwareSource softwareclient.AppNoType,
 ) *Application {
 	app := Application{}
 	app.loadConfigFromDisk()
@@ -490,7 +491,7 @@ func (mc *Application) onConnectionToOurServerChanged(v EventValue) {
 }
 
 func (mc *Application) onReceivingRequestCommand(v EventValue) {
-	logger.Root.Infof("Receiving command request")
+	logger.Root.Infof("XXXXXX                     Receiving command request")
 	msg, ok := v.(nsq_models.Message)
 	if !ok {
 		logger.Root.Errorf("Wrong value for event handler onReceivingRequestCommand")
@@ -525,6 +526,9 @@ func (mc *Application) Start(client IClientAdapter, cachedIdsFile string, debugM
 	mc.NetworkManager.RegisterEventHandler(EventConnectionToOurServerChanged, mc.onConnectionToOurServerChanged)
 	mc.NetworkManager.RegisterEventHandler(EventOnReceivingRequestCommand, mc.onReceivingRequestCommand)
 
+	mc.config.WorkerConfigs.Crawler.Status = models.WorkerStopped
+	mc.config.WorkerConfigs.Checker.Status = models.WorkerStopped
+
 	defer func() {
 		if r := recover(); r != nil {
 			logger.Root.Infof("Recover from core client start")
@@ -535,8 +539,6 @@ func (mc *Application) Start(client IClientAdapter, cachedIdsFile string, debugM
 	client.SetHostApplication(mc)
 	client.Init()
 	//mc.loadConfigFromDisk()
-	mc.config.WorkerConfigs.Crawler.RequestedStatus = models.WorkerStopped
-	mc.config.WorkerConfigs.Checker.RequestedStatus = models.WorkerStopped
 	mc.NetworkManager.setStateConnectionToServer(StateDisconnected)
 
 	mc.client = client
@@ -598,8 +600,9 @@ func (mc *Application) _startGettingData() {
 	logger.Root.Infof("Starting function _startGettingData")
 	if mc.CanStartChecker() {
 		go func() {
-			mc.client.GetAChecker()
-			mc.config.WorkerConfigs.Checker.Status = models.WorkerRunning
+			if mc.client.GetNumRunningCheckers() > 0 {
+				mc.config.WorkerConfigs.Checker.Status = models.WorkerRunning
+			}
 			mc.client.StartOrStopAllCheckers(true)
 			mc.adjustCheckerStatus(true)
 		}()
@@ -701,15 +704,15 @@ func (mc *Application) startCrawlerStatusWatcher() {
 	for {
 		mc.adjustCrawlerStatus(mc.CanStartCrawler())
 
-		needToStart := mc.getNeedToStartCrawler()
-		if !needToStart && mc.client.GetNumRunningCrawlers() == 0 {
-			mc.config.WorkerConfigs.Crawler.Status = models.WorkerStopped
-			break
-		}
-		if needToStart && mc.client.GetNumRunningCrawlers() != 0 {
-			mc.config.WorkerConfigs.Crawler.Status = models.WorkerRunning
-			break
-		}
+		//needToStart := mc.getNeedToStartCrawler()
+		//if !needToStart && mc.client.GetNumRunningCrawlers() == 0 {
+		//	mc.config.WorkerConfigs.Crawler.Status = models.WorkerStopped
+		//	break
+		//}
+		//if needToStart && mc.client.GetNumRunningCrawlers() != 0 {
+		//	mc.config.WorkerConfigs.Crawler.Status = models.WorkerRunning
+		//	break
+		//}
 		time.Sleep(5 * time.Second)
 	}
 }
@@ -718,16 +721,16 @@ func (mc *Application) startCheckerStatusWatcher() {
 	for {
 		mc.adjustCheckerStatus(mc.CanStartChecker())
 
-		needToStart := mc.getNeedToStartChecker()
-
-		if !needToStart && mc.client.GetNumRunningCheckers() == 0 {
-			mc.config.WorkerConfigs.Checker.Status = models.WorkerStopped
-			break
-		}
-		if needToStart && mc.client.GetNumRunningCheckers() != 0 {
-			mc.config.WorkerConfigs.Checker.Status = models.WorkerRunning
-			break
-		}
+		//needToStart := mc.getNeedToStartChecker()
+		//
+		//if !needToStart && mc.client.GetNumRunningCheckers() == 0 {
+		//	mc.config.WorkerConfigs.Checker.Status = models.WorkerStopped
+		//	break
+		//}
+		//if needToStart && mc.client.GetNumRunningCheckers() != 0 {
+		//	mc.config.WorkerConfigs.Checker.Status = models.WorkerRunning
+		//	break
+		//}
 		time.Sleep(5 * time.Second)
 	}
 }
@@ -1058,8 +1061,8 @@ func (mc *Application) Dispose() {
 	logger.Root.Infof("Set need to close=true from the Dispose")
 	mc.SetNeedToStopGettingData(true)
 	mc.Lock()
-	mc.config.WorkerConfigs.Crawler.RequestedStatus = models.WorkerStopped
-	mc.config.WorkerConfigs.Checker.RequestedStatus = models.WorkerStopped
+	mc.config.WorkerConfigs.Crawler.Status = models.WorkerStopped
+	mc.config.WorkerConfigs.Checker.Status = models.WorkerStopped
 	mc.Unlock()
 	if mc.NetworkManager.isTunnelStarted() {
 		mc.sendPingMessage()

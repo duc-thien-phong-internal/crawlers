@@ -8,6 +8,7 @@ import (
 	"github.com/duc-thien-phong/techsharedservices/utils"
 	"github.com/golang/glog"
 	"github.com/joho/godotenv"
+	"github.com/zserge/lorca"
 	"os"
 	"os/signal"
 	"path"
@@ -16,6 +17,7 @@ import (
 )
 
 func main() {
+	defer os.Exit(0)
 
 	logger.InitLogger(nil)
 
@@ -58,8 +60,13 @@ func main() {
 		app.Dispose()
 	}()
 
-	app.Start(adapter, "pega7.ids", false, func() {
+	ui, _ := lorca.New("", "", 480, 320)
+	defer ui.Close()
+
+	go app.Start(adapter, "pega7.ids", false, func() {
 
 	})
+
+	<-ui.Done()
 
 }

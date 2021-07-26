@@ -2,6 +2,7 @@ package basecrawler
 
 import (
 	"github.com/duc-thien-phong/techsharedservices/models"
+	"github.com/duc-thien-phong/techsharedservices/models/softwareclient"
 	"github.com/duc-thien-phong/techsharedservices/utils"
 	"github.com/tebeka/selenium"
 	"time"
@@ -25,6 +26,10 @@ func ContainsTag(arr []string, tag string) bool {
 		}
 	}
 	return false
+}
+
+func GenerateAppNoFromTimeStamp(currentTimeInMicro uint64, softwareClientNo softwareclient.AppNoType) uint64 {
+	return currentTimeInMicro | uint64(int64(softwareClientNo)<<52)
 }
 
 func WaitUntilElementDisplay(d selenium.WebDriver, xpath string, timeoutInSec int, intervalInSec int, timeSleep int, numRetries int) error {

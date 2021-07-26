@@ -64,6 +64,7 @@ type MetaCheckingAppRequest struct {
 	CommandSubType commands.CommandSubType
 	// Channel of the command
 	Channel string
+	Tried   int
 }
 
 type MetaCheckingAppResult struct {
@@ -80,6 +81,7 @@ type MetaCrawlingAppRequest struct {
 	DataID      string
 	IndexInPage int
 	PageNo      int
+	Tried       int
 }
 
 type MetaCrawlingAppResult struct {
@@ -223,7 +225,7 @@ func (c *BaseAdapter) Crawl(config models.DataCrawlerConfig) ([]customer.Applica
 
 		}
 
-		logger.Root.Infof("Exit function receiving process")
+		logger.Root.Infof("Exit function receiving process ============================")
 	}()
 
 	/// START THE MAIN PROCESS OF THE PRODUCER
@@ -297,8 +299,8 @@ func (c *BaseAdapter) Crawl(config models.DataCrawlerConfig) ([]customer.Applica
 				DataID:      id,
 				IndexInPage: i,
 				PageNo:      c.GetConfig().CurrentCrawlingPage,
+				Tried:       0,
 			})
-			c.AddNumNeedToCrawl(1)
 
 			// TODO: update me
 			if nedToStopBecauseOfError {
@@ -321,11 +323,11 @@ func (c *BaseAdapter) Crawl(config models.DataCrawlerConfig) ([]customer.Applica
 	}
 
 	for i := 0; i < len(c.CrawlerList); i++ {
-		c.NeedToCrawled <- MetaCrawlingAppRequest{
+		c.AddCrawlingRequestBackToTheQueue(MetaCrawlingAppRequest{
 			DataID:      "",
 			IndexInPage: 0,
 			PageNo:      0,
-		}
+		})
 	}
 	// p.wg.Wait()
 	// p.chanCrawlers <- struct{}{}
@@ -605,7 +607,10 @@ func (c *BaseAdapter) HandleRequest(msg nsqmodels.Message) error {
 	case commands.SubTypeCheckStageByAppNo:
 		c.handleCheckStageRequest(msg)
 		break
+	case commands.SubTypeCheckCustomerCIC:
+		c.handleCheckCICRequest(msg)
 	}
+
 	return nil
 }
 
@@ -633,7 +638,7 @@ func (c *BaseAdapter) sendCheckResult(a MetaCheckingAppResult) {
 	var app customer.Application
 
 	if a.App != nil {
-		//app = *a.app
+		app = *a.App
 		if !a.Request.CheckFull {
 			var stageSummary = customer.ApplicationStageSummary{
 				ApplicationStage:    app.ApplicationStage,
@@ -763,8 +768,59 @@ func (c *BaseAdapter) handleCheckStageRequest(msg nsqmodels.Message) {
 	}
 }
 
+func (c *BaseAdapter) handleCheckCICRequest(msg nsqmodels.Message) {
+	logger.Root.Infof(">>>>> CHECK CIC REQ")
+	checkCm := commands.CommandReqCheckCIC{}
+
+	body := msg.GetRawDataFromBody()
+	var err error
+	if err = json.Unmarshal([]byte(body), &checkCm); err == nil {
+		// logger.Root.Infof("Get command:%#v\n", checkCm)
+
+		var dataInStr string
+		var finalErr error
+
+		query := checkCm.Type + checkCm.Query
+
+		if !c.NeedToCloseCheckers && c.CanStartChecker() {
+			logger.Root.Infof("Send check req of `%s` to queue", query)
+			c.NeedToChecked <- MetaCheckingAppRequest{
+				CheckFull:      true,
+				DataID:         query,
+				CommandID:      msg.Command.ID,
+				CommandSubType: msg.Command.SubType,
+				Channel:        msg.Channel,
+			}
+			return
+
+		}
+
+		dataInStr = "@FAIL_TO_CHECK_NOT_ALLOW_NOW"
+		finalErr = errors.New("The operation is not allowed now")
+
+		result := commands.CommandRespCheckCIC{
+			Query: query,
+			Data:  dataInStr,
+			Ok:    false,
+		}
+
+		result.Error = finalErr.Error()
+
+		resultInByte, err := json.Marshal(result)
+		if err != nil {
+			logger.Root.Errorf("Error when marshal check result to json. Error:%s\n", err)
+		} else {
+			c.SendResponseCommand(msg.Command.ID, msg.Command.SubType, string(resultInByte), msg.Channel)
+		}
+
+	} else {
+		logger.Root.Errorf("Error when parsing string :'%s' into object. Error:'%s'\n", body, err)
+	}
+}
+
 // Close closes the client
 func (c *BaseAdapter) Close() error {
+	logger.Root.Infof("call to baseadaper Close")
 	c.NeedToCloseCrawlers = true
 	c.NeedToCloseCheckers = true
 	c.Application.SetNeedToStopGettingData(true)
@@ -773,6 +829,7 @@ func (c *BaseAdapter) Close() error {
 	go func() {
 		for _, a := range c.CrawlerList {
 			a.SetNeedToClose(true)
+			logger.Root.Infof("Close crawler %s", a.GetID())
 			a.Close()
 		}
 		wg.Done()
@@ -780,11 +837,13 @@ func (c *BaseAdapter) Close() error {
 	go func() {
 		for _, a := range c.CheckerList {
 			a.SetNeedToClose(true)
+			logger.Root.Infof("Close checker %s", a.GetID())
 			a.Close()
 		}
 		wg.Done()
 	}()
 	if c.Producer != nil {
+		logger.Root.Infof("Close producer %s", c.Producer.GetID())
 		c.Producer.SetNeedToClose(true)
 		c.Producer.Close()
 	}
@@ -904,6 +963,12 @@ func (p *BaseAdapter) startCrawlerMonitor(wg *sync.WaitGroup) {
 	p.StartedCrawlerWatcher = true
 	logger.Root.Infof("Starting crawler watcher....")
 	for {
+		//if p.GetNumRunningCrawlers() > 0 && !p.GetNeedToCloseCrawlers() {
+		//	p.GetHostApplication().config.WorkerConfigs.Crawler.Status = models.WorkerRunning
+		//} else if p.GetNumRunningCheckers() == 0 && p.GetHostApplication().config.WorkerConfigs.Crawler.RequestedStatus  {
+		//	p.GetHostApplication().config.WorkerConfigs.Crawler.Status = models.WorkerStopped
+		//}
+
 		if p.CanStartCrawler() && len(p.CrawlerList) < p.getCrawlerParallelism() && !p.NeedToCloseCrawlers {
 			if err := p.createAndAddCrawlerToList(wg); err != nil {
 				time.Sleep(15 * time.Second)
@@ -914,6 +979,7 @@ func (p *BaseAdapter) startCrawlerMonitor(wg *sync.WaitGroup) {
 			}
 			time.Sleep(15 * time.Second)
 		}
+
 	}
 }
 
@@ -921,6 +987,12 @@ func (c *BaseAdapter) startCheckerMonitor(wg *sync.WaitGroup) {
 	c.StartedCheckerWatcher = true
 	logger.Root.Infof("Starting checker watcher....")
 	for {
+		//if c.GetNumRunningCrawlers() > 0 && !c.GetNeedToCloseCheckers() {
+		//	c.GetHostApplication().config.WorkerConfigs.Crawler.Status = models.WorkerRunning
+		//} else if c.GetNumRunningCrawlers() == 0 && !c.getNeedToStartChecker() {
+		//	c.GetHostApplication().config.WorkerConfigs.Crawler.Status = models.WorkerStopped
+		//}
+
 		if c.CanStartChecker() && len(c.CheckerList) < c.getCheckerParallelism() && !c.NeedToCloseCheckers {
 			if err := c.createAndAddCheckerToList(wg); err != nil {
 				time.Sleep(15 * time.Second)
@@ -931,6 +1003,7 @@ func (c *BaseAdapter) startCheckerMonitor(wg *sync.WaitGroup) {
 			}
 			time.Sleep(15 * time.Second)
 		}
+
 	}
 }
 
@@ -1021,6 +1094,12 @@ func (p *BaseAdapter) SubmitApps(results []customer.Application, onOK func()) {
 func (p *BaseAdapter) AddCrawlingRequestBackToTheQueue(request MetaCrawlingAppRequest) {
 	p.NeedToCrawled <- request
 	p.AddNumNeedToCrawl(1)
+}
+
+func (p *BaseAdapter) GetCrawlingRequestFromTheQueue() (request MetaCrawlingAppRequest) {
+	request = <-p.NeedToCrawled
+	p.AddNumNeedToCrawl(-1)
+	return
 }
 
 func (p *BaseAdapter) AddNumNeedToCrawl(value int) {

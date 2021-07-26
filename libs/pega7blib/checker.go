@@ -97,6 +97,7 @@ mainFor:
 					App:            app,
 					CommandID:      meta.CommandID,
 					CommandSubType: meta.CommandSubType,
+					Channel:        meta.Channel,
 				}
 				logger.Root.Infof("`%s` sent check result of %s to processed queue", p.GetID(), meta.DataID)
 			}

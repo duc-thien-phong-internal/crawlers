@@ -6,6 +6,7 @@ import (
 	"github.com/duc-thien-phong-internal/crawlers/pkg/basecrawler"
 	"github.com/duc-thien-phong/techsharedservices/logger"
 	"github.com/duc-thien-phong/techsharedservices/models/customer"
+	"github.com/duc-thien-phong/techsharedservices/models/softwareclient"
 	"github.com/duc-thien-phong/techsharedservices/utils"
 	"github.com/tebeka/selenium"
 	"golang.org/x/net/html"
@@ -233,14 +234,14 @@ func (p *Base) FetchInformationOfProfile(dataID string, fetchFull bool) (*custom
 		if elm, err := d.FindElement(selenium.ByXPATH, "//*[@id='TABANCHOR' and @tabtitle='Information']"); err == nil {
 			elm.MoveTo(0, 0)
 			elm.Click()
-			time.Sleep(200 * time.Millisecond)
+			time.Sleep(300 * time.Millisecond)
 			basecrawler.WaitUntilElementDisplay(d, "//*[@id='TABANCHOR' and @tabtitle='Loan']", 10, 1, 1, 3)
 
 			if elm, err := d.FindElement(selenium.ByXPATH, "//*[@id='TABANCHOR' and @tabtitle='Loan']"); err == nil {
 				elm.MoveTo(0, 0)
 				elm.Click()
 				time.Sleep(300 * time.Millisecond)
-				basecrawler.WaitUntilElementDisplay(d, "//*[@node_name='LoanDetails']", 5, 1, 1, 3)
+				basecrawler.WaitUntilElementDisplay(d, "//*[@node_name='LoanDetails']", 10, 1, 1, 3)
 			}
 
 			if fetchFull {
@@ -249,36 +250,42 @@ func (p *Base) FetchInformationOfProfile(dataID string, fetchFull bool) (*custom
 					elm.Click()
 					time.Sleep(300 * time.Millisecond)
 					basecrawler.WaitUntilElementDisplay(d, "//*[@node_name='Identification']", 5, 1, 1, 3)
+					time.Sleep(300 * time.Millisecond)
 				}
 				if elm, err := d.FindElement(selenium.ByXPATH, "//*[@id='TABANCHOR' and @tabtitle='Family']"); err == nil {
 					elm.MoveTo(0, 0)
 					elm.Click()
 					time.Sleep(300 * time.Millisecond)
-					basecrawler.WaitUntilElementDisplay(d, "//*[@node_name='Family']", 5, 1, 1, 3)
+					basecrawler.WaitUntilElementDisplay(d, "//*[@node_name='Family']", 7, 1, 1, 3)
+					time.Sleep(300 * time.Millisecond)
 				}
 				if elm, err := d.FindElement(selenium.ByXPATH, "//*[@id='TABANCHOR' and @tabtitle='Contacts']"); err == nil {
 					elm.MoveTo(0, 0)
 					elm.Click()
 					time.Sleep(300 * time.Millisecond)
 					basecrawler.WaitUntilElementDisplay(d, "//*[@node_name='ContactInformation']", 5, 1, 1, 3)
+					time.Sleep(300 * time.Millisecond)
 				}
 				if elm, err := d.FindElement(selenium.ByXPATH, "//*[@id='TABANCHOR' and @tabtitle='Work']"); err == nil {
 					elm.MoveTo(0, 0)
 					elm.Click()
 					time.Sleep(300 * time.Millisecond)
 					basecrawler.WaitUntilElementDisplay(d, "//*[@node_name='EmployerAndWorkExperience']", 5, 1, 1, 3)
+					time.Sleep(300 * time.Millisecond)
 				}
 				if elm, err := d.FindElement(selenium.ByXPATH, "//*[@id='TABANCHOR' and @tabtitle='Income']"); err == nil {
 					elm.MoveTo(0, 0)
 					elm.Click()
 					time.Sleep(300 * time.Millisecond)
 					basecrawler.WaitUntilElementDisplay(d, "//*[@node_name='Income']", 5, 1, 1, 3)
+					time.Sleep(300 * time.Millisecond)
 				}
 				if elm, err := d.FindElement(selenium.ByXPATH, "//*[@id='TABANCHOR' and @tabtitle='Referenced Persons']"); err == nil {
 					elm.MoveTo(0, 0)
 					elm.Click()
 					time.Sleep(300 * time.Millisecond)
-					basecrawler.WaitUntilElementDisplay(d, "//*[@node_name='OtherReferensedPersons']", 5, 1, 1, 3)
+					basecrawler.WaitUntilElementDisplay(d, "//*[@node_name='OtherReferensedPersons']", 7, 1, 1, 3)
+					time.Sleep(300 * time.Millisecond)
 				}
 
 				time.Sleep(300 * time.Millisecond)
@@ -378,7 +385,7 @@ func (p *Base) FetchInformationOfProfile(dataID string, fetchFull bool) (*custom
 func constructCustomerApplicationFromContent(doc *html.Node, workID string) (*customer.Application, error) {
 
 	// app := customer.Applications{}
-	app := customer.NewApplication(true, customer.SourcePega, customer.SoftwarePega7)
+	app := customer.NewApplication(true, customer.SourcePega, softwareclient.ApplicationPega7)
 
 	app.WorkID = workID
 
@@ -454,8 +461,12 @@ func constructCustomerApplicationFromContent(doc *html.Node, workID string) (*cu
 		// 10/01/2021
 		app.PersonalInformation.Birthday = v.(time.Time)
 	} else {
-		logger.Root.Errorf("Error empty field `DateOfBirth`")
-		return nil, ErrEmptyContent
+		if v := getElementValueWithInnerText(doc, &app, "DateOfBirth", "Date of birth", TypeShortDate, nil, "pyCaseSummary"); v != nil {
+			app.PersonalInformation.Birthday = v.(time.Time)
+		} else {
+			logger.Root.Errorf("Error empty field `DateOfBirth`")
+			return nil, ErrEmptyContent
+		}
 	}
 
 	if v := getElementValueWithInnerText(doc, &app, "CCName", "CC Name", TypeString, nil, ""); v != nil {
@@ -618,7 +629,8 @@ func constructCustomerApplicationFromContent(doc *html.Node, workID string) (*cu
 	if v := getElementValueWithInnerText(doc, &app, "TotalCreditAmount", "Total Amount", TypeFloat64, formatPrice, "LoanDetails"); v != nil {
 		app.FinancialInformation.RequestedAmountAndInsurance = v.(float64)
 		if app.FinancialInformation.RequestedAmountAndInsurance == 0 {
-			return nil, ErrEmptyContent
+			app.FinancialInformation.RequestedAmountAndInsurance = app.FinancialInformation.RequestedAmount
+			//return nil, ErrEmptyContent
 		}
 	} else {
 		if v := getElementValueWithInnerText(doc, &app, "", "Topup Amount", TypeFloat64, formatPrice, "LoanDetails"); v != nil {
@@ -627,8 +639,13 @@ func constructCustomerApplicationFromContent(doc *html.Node, workID string) (*cu
 			if v := getElementValueWithInnerText(doc, &app, "", "Final Eligible Amount", TypeFloat64, formatPrice, "LoanDetails"); v != nil {
 				app.FinancialInformation.RequestedAmountAndInsurance = v.(float64)
 			} else {
-				logger.Root.Errorf("Error empty field `RequestedAmountAndInsurance` with xpath %s.", makeXPathPega75("TotalCreditAmount", "LoanDetails", "Total Amount"))
-				return nil, ErrEmptyContent
+				if v := getElementValueWithInnerText(doc, &app, "", "Cash Offered To Customer", TypeFloat64, formatPrice, "LoanDetails"); v != nil {
+					app.FinancialInformation.RequestedAmountAndInsurance = v.(float64)
+				} else {
+					logger.Root.Errorf("Error empty field `RequestedAmountAndInsurance` with xpath %s.", makeXPathPega75("TotalCreditAmount", "LoanDetails", "Total Amount"))
+					app.FinancialInformation.RequestedAmountAndInsurance = app.FinancialInformation.RequestedAmount
+				}
+				//return nil, ErrEmptyContent
 			}
 		}
 	}

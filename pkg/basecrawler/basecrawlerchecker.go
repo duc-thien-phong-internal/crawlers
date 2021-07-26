@@ -57,7 +57,8 @@ type Worker struct {
 	// we can have different ways to login or to check authentication
 	// --> it is better if we can plug the worker adapter here according to our need
 	WorkerAdapter WorkerAdapterInterface // for checker/crawler
-	ClientAdapter IClientAdapter         // for provider
+
+	ClientAdapter IClientAdapter // for provider
 }
 
 // SetNeedToClose mark the worker to be closed

@@ -36,9 +36,9 @@ done
 DIR="$(cd -P "$(dirname "$SOURCE")" >/dev/null 2>&1 && pwd)"
 BASEDIR=$(realpath ${DIR}/../..)
 
-OUTDIR=${BASEDIR}/bin/executable/cicb/${OS}/
 SRC=cmd/cicb
 EXECUTABLE=cicb
+OUTDIR=${BASEDIR}/bin/executable/${EXECUTABLE}/${OS}/
 
 echo "Basedir: ${BASEDIR}"
 echo "Source: ${BASEDIR}/${SRC}"
@@ -46,11 +46,11 @@ echo "Source: ${BASEDIR}/${SRC}"
 echo "=======> Building ${OS}....."
 echo "OS: ${OS}"
 
-if [ "$OS" == "windows" ]; then
+if [ "$OS" = "windows" ]; then
   EXECUTABLE=$EXECUTABLE.exe
 fi
 
-cd ${BASEDIR}/${SRC}; env GOOS=${OS} GOARCH=amd64 go build -o ${OUTDIR}${EXECUTABLE} ${BASEDIR}/${SRC} && cd - && cd $OUTDIR
+cd ${BASEDIR}/${SRC}; echo `pwd`; env GOOS=${OS} GOARCH=amd64 go build -o ${OUTDIR}${EXECUTABLE} ${BASEDIR}/${SRC} && cd - && cd $OUTDIR
 zip -r ${EXECUTABLE}.zip ${EXECUTABLE}
 cd -
 

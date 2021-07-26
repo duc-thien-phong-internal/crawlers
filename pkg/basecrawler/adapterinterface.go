@@ -3,6 +3,7 @@ package basecrawler
 import (
 	"github.com/duc-thien-phong/techsharedservices/models"
 	"github.com/duc-thien-phong/techsharedservices/models/customer"
+	"github.com/duc-thien-phong/techsharedservices/models/softwareclient"
 	nsq_models "github.com/duc-thien-phong/techsharedservices/nsq/models"
 )
 
@@ -14,7 +15,7 @@ const (
 )
 
 type IClientAdapter interface {
-	GetWorkerSoftwareSource() customer.SoftwareSource
+	GetWorkerSoftwareSource() softwareclient.AppNoType
 
 	// SetOS(os osinfo.OSType)
 	Init()

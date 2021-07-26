@@ -10,7 +10,7 @@ import (
 	"github.com/duc-thien-phong/techsharedservices/constantcodes/httpcodes"
 	"github.com/duc-thien-phong/techsharedservices/logger"
 	"github.com/duc-thien-phong/techsharedservices/models"
-	"github.com/duc-thien-phong/techsharedservices/models/customer"
+	"github.com/duc-thien-phong/techsharedservices/models/softwareclient"
 	nsq_models "github.com/duc-thien-phong/techsharedservices/nsq/models"
 	"github.com/duc-thien-phong/techsharedservices/utils"
 	"github.com/ductrung-nguyen/simplesshtun"
@@ -90,7 +90,7 @@ type NetworkManager struct {
 	cookieJarOurServer          *cookiejar.Jar
 	AuthorizationToken          string
 	numErrorWhenCommunicating   int
-	workerSoftwareSource        customer.SoftwareSource
+	workerSoftwareSource        softwareclient.AppNoType
 	lastTimeGetConfigFromServer time.Time
 	LastTimeRefreshToken        time.Time
 	application                 *Application
@@ -126,7 +126,7 @@ func CreateNetworkManager(
 	checkConnFunc func() ConnectionState,
 	openTunnelFunc func() error,
 	closeFunnelFunc func() error,
-	workerSoftwareSource customer.SoftwareSource,
+	workerSoftwareSource softwareclient.AppNoType,
 ) *NetworkManager {
 	n := NetworkManager{
 		application:          a,
@@ -208,6 +208,7 @@ func (n *NetworkManager) RegisterEventHandler(eventName string, handler EventHan
 
 // EmitEvent raises an event, and invokes the handlers
 func (n *NetworkManager) EmitEvent(eventName string, response EventValue) {
+	logger.Root.Infof("Emiting event `%s`", eventName)
 	if _, ok := n.eventHandlers[eventName]; ok {
 		for _, handler := range n.eventHandlers[eventName] {
 			go func(handler chan EventValue) {
@@ -215,6 +216,7 @@ func (n *NetworkManager) EmitEvent(eventName string, response EventValue) {
 			}(handler)
 		}
 	}
+	logger.Root.Infof("Emited event `%s`", eventName)
 }
 
 func (n *NetworkManager) SetNeedToOpenTunnel(value bool) {
@@ -332,7 +334,6 @@ func (n *NetworkManager) openSocketConnection() {
 		With("channel", n.application.config.NsqConfig.MainChannel).
 		Infof("Registered to our server!")
 
-	logger.Root.Infof("Waiting for receiving command from server....\n")
 	go n.waitForCommandFromOurServer()
 }
 
@@ -689,7 +690,7 @@ func (n *NetworkManager) LoginToOurServer() bool {
 		time.Sleep(5 * time.Second)
 		return false
 	}
-	logger.Root.Infof(" Login OK!\n")
+	logger.Root.Infof(" Login OK! Token: %s\n", result.Data)
 
 	n.AuthorizationToken = "Bearer " + result.Data
 	return true
@@ -781,10 +782,17 @@ func (n *NetworkManager) FetchAccounts() {
 	}
 	resultStr, err := utils.SendRequest(url, n.cookieJarOurServer, headers, "GET", nil, nil)
 
-	var result models.ServerListRemoteAccountsResult
+	type ServerListRemoteAccountsResult struct {
+		RemoteAccounts []models.RemoteAccount `json:"data"`
+		Error          interface{}            `json:"error"`
+		Message        string                 `json:"message"`
+		Success        bool                   `json:"success"`
+	}
+
+	var result ServerListRemoteAccountsResult
 	json.Unmarshal([]byte(resultStr), &result)
 
-	if err != nil || !result.Ok {
+	if err != nil || !result.Success {
 		logger.Root.Errorf(" Error when fetching accounts. Error %s Result: %#v\n", err, result)
 		n.handleTheError(err)
 	} else {
@@ -833,6 +841,8 @@ func (n *NetworkManager) handleTheError(err error) {
 }
 
 func (n *NetworkManager) waitForCommandFromOurServer() {
+	logger.Root.Infof("Waiting for receiving command from server....\n")
+
 	defer func() {
 		logger.Root.Infof("Stop waiting for commands from our server")
 		if r := recover(); r != nil {
@@ -861,12 +871,13 @@ func (n *NetworkManager) waitForCommandFromOurServer() {
 			}()
 			break
 		}
-		// logger.Root.Infof("got Message: %#v\n", msg)
+		logger.Root.Infof("got Message: %#v\n", msg)
 
 		if !msg.HasEmptyBody() {
 
 			if msg.Command != nil {
 				if msg.Command.Type == commands.TypeRequest {
+					logger.Root.Infof("Emit event Receving request command")
 					n.EmitEvent(EventOnReceivingRequestCommand, msg)
 
 				} else if msg.Command.Type == commands.TypeResponse {
@@ -962,7 +973,9 @@ func (n *NetworkManager) writePump() {
 				if pretendMsg.Msg.Command != nil {
 					logger.Root.Errorf("  With command %#v\n err:%s", pretendMsg.Msg.Command, err)
 				}
-				pretendMsg.OnError(err)
+				if pretendMsg.OnError != nil {
+					pretendMsg.OnError(err)
+				}
 				n.handleTheError(err)
 			} else {
 				logger.Root.Infof("Sent command id:%s...", pretendMsg.Msg.Command.ID)
